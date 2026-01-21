@@ -20,13 +20,12 @@ import {
   MonitorCheck,
   Pin,
   ShieldCheck,
+  Smartphone,
   Stethoscope,
-  Users,
   Wifi,
 } from "lucide-react";
 
 type Role = "Doctor" | "Nurse" | "Admin";
-type RoomType = "case" | "team";
 type RoomStatus = "auto" | "pinned" | "manual" | "archived";
 type RiskLevel = "critical" | "high" | "medium" | "low";
 type PatientStatus = "unstable" | "watch" | "stable";
@@ -49,13 +48,14 @@ type Patient = {
 
 type Room = {
   id: string;
-  type: RoomType;
   label: string;
   sublabel: string;
   patientId?: string;
+  patientCode?: string;
   riskLevel?: RiskLevel;
   status?: RoomStatus;
   activation?: string;
+  recentDomains?: DomainKey[];
   updatedAt: string;
   unread: number;
 };
@@ -108,21 +108,32 @@ type LlmSummary = {
   evidence: string[];
 };
 
+type InsightUpdate = {
+  domain: DomainKey;
+  lastUpdated: string;
+  standardized: { label: string; value: string }[];
+  drivers?: string[];
+  rawOutputs?: string[];
+  evidence?: string[];
+  confidence?: string;
+  quality?: DomainInsight["quality"];
+  status?: DomainInsight["status"];
+};
+
 type ActivityLog = {
   time: string;
   label: string;
   actor: string;
 };
 
-type ClinicianStatus = "online" | "busy" | "offline";
-
-type Clinician = {
-  id: string;
-  name: string;
-  role: string;
-  team: string;
-  status: ClinicianStatus;
+type SystemStatus = {
+  websocket: string;
+  lastSync: string;
+  dataLatency: string;
+  warnings: string[];
 };
+
+type IconType = typeof Activity;
 
 const roles: Role[] = ["Doctor", "Nurse", "Admin"];
 
@@ -187,11 +198,6 @@ const alertTone: Record<RiskLevel, string> = {
   low: "border-emerald-200 bg-emerald-50",
 };
 
-const clinicianStatusTone: Record<ClinicianStatus, string> = {
-  online: "bg-emerald-500",
-  busy: "bg-amber-500",
-  offline: "bg-slate-400",
-};
 
 const domainIcon: Record<DomainKey, typeof Activity> = {
   ecg: Activity,
@@ -266,78 +272,43 @@ const patients: Patient[] = [
   },
 ];
 
-const clinicians: Clinician[] = [
-  {
-    id: "cl-001",
-    name: "정현우",
-    role: "Cardiology MD",
-    team: "CICU",
-    status: "online",
-  },
-  {
-    id: "cl-002",
-    name: "김보라",
-    role: "ICU RN",
-    team: "ICU",
-    status: "busy",
-  },
-  {
-    id: "cl-003",
-    name: "서지훈",
-    role: "Neurology MD",
-    team: "Neuro",
-    status: "online",
-  },
-  {
-    id: "cl-004",
-    name: "박은지",
-    role: "ER RN",
-    team: "ER",
-    status: "online",
-  },
-  {
-    id: "cl-005",
-    name: "조현석",
-    role: "Radiology",
-    team: "Imaging",
-    status: "offline",
-  },
-];
-
 const initialCaseRooms: Room[] = [
   {
     id: "room-pt-001",
-    type: "case",
     label: "김철수",
     sublabel: "CICU-12 · ECG 위험 상승",
     patientId: "pt-001",
+    patientCode: "MRN-203144",
     riskLevel: "critical",
     status: "auto",
     activation: "Arrhythmia risk HIGH 감지",
+    recentDomains: ["ecg", "icu"],
     updatedAt: "14:18",
     unread: 3,
   },
   {
     id: "room-pt-003",
-    type: "case",
     label: "박민수",
     sublabel: "ICU-03 · Risk spike",
     patientId: "pt-003",
+    patientCode: "MRN-203845",
     riskLevel: "high",
     status: "pinned",
     activation: "ICU risk 78 → 92",
+    recentDomains: ["icu"],
     updatedAt: "14:08",
     unread: 1,
   },
   {
     id: "room-pt-004",
-    type: "case",
     label: "최지원",
     sublabel: "ER-02 · Imaging alert",
     patientId: "pt-004",
+    patientCode: "MRN-203772",
     riskLevel: "high",
     status: "auto",
     activation: "New lesion detected",
+    recentDomains: ["imaging"],
     updatedAt: "14:05",
     unread: 2,
   },
@@ -346,34 +317,16 @@ const initialCaseRooms: Room[] = [
 const archivedRooms: Room[] = [
   {
     id: "room-pt-002",
-    type: "case",
     label: "이영희",
     sublabel: "NEU-07 · Neuro follow-up",
     patientId: "pt-002",
+    patientCode: "MRN-203921",
     riskLevel: "medium",
     status: "archived",
     activation: "Neuro follow-up 완료",
+    recentDomains: ["neuro", "imaging"],
     updatedAt: "13:20",
     unread: 0,
-  },
-];
-
-const teamRooms: Room[] = [
-  {
-    id: "room-team-stroke",
-    type: "team",
-    label: "Stroke Team",
-    sublabel: "응급 뇌졸중 대응",
-    updatedAt: "14:20",
-    unread: 4,
-  },
-  {
-    id: "room-team-icu",
-    type: "team",
-    label: "ICU Team",
-    sublabel: "중환자실 야간 협업",
-    updatedAt: "14:08",
-    unread: 1,
   },
 ];
 
@@ -493,26 +446,6 @@ const initialMessagesByRoom: Record<string, Message[]> = {
       time: "13:20",
       type: "ai",
       content: "Cognitive decline risk MODERATE. 추적 데이터 기록 완료.",
-    },
-  ],
-  "room-team-stroke": [
-    {
-      id: "msg-401",
-      sender: "Stroke Team",
-      role: "Coordinator",
-      time: "14:14",
-      type: "system",
-      content: "ER-02 케이스 활성화. 영상 검토 진행 중.",
-    },
-  ],
-  "room-team-icu": [
-    {
-      id: "msg-501",
-      sender: "ICU Team",
-      role: "Charge Nurse",
-      time: "14:06",
-      type: "system",
-      content: "위험 환자 2명 pin 처리 완료. 상태 공유 바랍니다.",
     },
   ],
 };
@@ -832,6 +765,98 @@ const summaryByPatient: Record<string, LlmSummary> = {
   },
 };
 
+type ClinicalDocument = {
+  id: string;
+  title: string;
+  source: string;
+  updatedAt: string;
+  summary: string;
+  tags: string[];
+};
+
+const documentsByPatient: Record<string, ClinicalDocument[]> = {
+  "pt-001": [
+    {
+      id: "doc-ecg-01",
+      title: "CICU Arrhythmia Monitoring Protocol v3",
+      source: "Hospital protocol",
+      updatedAt: "2024-02",
+      summary:
+        "부정맥 위험도 분류 기준과 모니터링 체크리스트를 정리한 내부 프로토콜 요약.",
+      tags: ["ECG", "Arrhythmia", "Protocol"],
+    },
+    {
+      id: "doc-icu-01",
+      title: "CICU Oxygenation Trend Guide",
+      source: "ICU guideline",
+      updatedAt: "2023-11",
+      summary:
+        "SpO2 하락 시 기록해야 할 지표와 경과 관찰 항목을 정리한 가이드.",
+      tags: ["ICU", "Vitals", "Guide"],
+    },
+  ],
+  "pt-003": [
+    {
+      id: "doc-icu-02",
+      title: "Sepsis Deterioration Indicators",
+      source: "Hospital protocol",
+      updatedAt: "2024-01",
+      summary:
+        "MAP, lactate, SpO2 변화 기준과 기록 방식 중심의 악화 지표 요약.",
+      tags: ["ICU", "Sepsis", "Indicators"],
+    },
+    {
+      id: "doc-icu-03",
+      title: "ICU Trend Documentation Checklist",
+      source: "Internal checklist",
+      updatedAt: "2023-08",
+      summary:
+        "최근 6시간 트렌드 요약 시 포함해야 할 지표 및 근거 문서 목록.",
+      tags: ["ICU", "Checklist", "Documentation"],
+    },
+  ],
+  "pt-004": [
+    {
+      id: "doc-img-01",
+      title: "Stroke CTA Review Workflow",
+      source: "Imaging guideline",
+      updatedAt: "2024-03",
+      summary:
+        "CTA 영상 검토 순서, 병변 확인 항목, 문서화 기준을 정리한 가이드.",
+      tags: ["Imaging", "CTA", "Workflow"],
+    },
+    {
+      id: "doc-img-02",
+      title: "LVO Suspicion Checklist",
+      source: "Hospital protocol",
+      updatedAt: "2023-12",
+      summary:
+        "LVO 의심 시 기록해야 할 체크 항목과 커뮤니케이션 기준 요약.",
+      tags: ["Imaging", "Stroke", "Checklist"],
+    },
+  ],
+  "pt-002": [
+    {
+      id: "doc-neuro-01",
+      title: "MCI Follow-up Documentation",
+      source: "Neurology guide",
+      updatedAt: "2023-10",
+      summary:
+        "인지 저하 추적 시 필요한 평가 항목과 비교 기록 포맷을 정리.",
+      tags: ["Neuro", "MCI", "Follow-up"],
+    },
+    {
+      id: "doc-neuro-02",
+      title: "MRI Longitudinal Review Notes",
+      source: "Imaging guide",
+      updatedAt: "2023-07",
+      summary:
+        "연속 MRI 비교 시 확인해야 할 영역과 요약 작성 기준.",
+      tags: ["Neuro", "MRI", "Guideline"],
+    },
+  ],
+};
+
 const activityLogByPatient: Record<string, ActivityLog[]> = {
   "pt-001": [
     { time: "14:16", label: "LLM 요약 열람", actor: "정현우 (MD)" },
@@ -848,7 +873,7 @@ const activityLogByPatient: Record<string, ActivityLog[]> = {
   ],
 };
 
-const initialSystemStatus = {
+const initialSystemStatus: SystemStatus = {
   websocket: "connected",
   lastSync: "2 min ago",
   dataLatency: "2m",
@@ -878,6 +903,7 @@ const riskOrder: Record<RiskLevel, number> = {
 export function ChatWorkspace() {
   const [activeRoomId, setActiveRoomId] = useState(initialCaseRooms[0].id);
   const [role, setRole] = useState<Role>("Doctor");
+  const [patientRoster, setPatientRoster] = useState<Patient[]>(patients);
   const [alertItems, setAlertItems] = useState<AlertFeedItem[]>(initialAlerts);
   const [caseRoomItems, setCaseRoomItems] = useState<Room[]>(initialCaseRooms);
   const [messageMap, setMessageMap] = useState<Record<string, Message[]>>(
@@ -886,6 +912,10 @@ export function ChatWorkspace() {
   const [timelineMap, setTimelineMap] = useState<Record<string, TimelineEvent[]>>(
     initialTimelineByRoom,
   );
+  const [insightsByPatient, setInsightsByPatient] =
+    useState<Record<string, DomainInsight[]>>(domainInsightsByPatient);
+  const [summaryByPatientState, setSummaryByPatientState] =
+    useState<Record<string, LlmSummary>>(summaryByPatient);
   const [systemStatus, setSystemStatus] = useState(initialSystemStatus);
   const [connectionState, setConnectionState] = useState<
     "connected" | "connecting" | "disconnected"
@@ -902,6 +932,8 @@ export function ChatWorkspace() {
       alert: AlertFeedItem;
       message: Message;
       timeline: TimelineEvent;
+      insightUpdate?: InsightUpdate;
+      summaryUpdate?: LlmSummary;
     }) => {
       setAlertItems((prev) => [payload.alert, ...prev]);
       setMessageMap((prev) => ({
@@ -918,11 +950,32 @@ export function ChatWorkspace() {
           payload.timeline,
         ],
       }));
+      setPatientRoster((prev) =>
+        prev.map((patient) =>
+          patient.id === payload.alert.patientId
+            ? {
+                ...patient,
+                riskLevel: payload.alert.severity,
+                status:
+                  payload.alert.severity === "critical" || payload.alert.severity === "high"
+                    ? "unstable"
+                    : payload.alert.severity === "medium"
+                      ? "watch"
+                      : "stable",
+              }
+            : patient,
+        ),
+      );
       setCaseRoomItems((prev) => {
         const idx = prev.findIndex((room) => room.id === payload.alert.roomId);
         if (idx >= 0) {
           const next = [...prev];
           const current = next[idx];
+          const recentDomains = current.recentDomains ?? [];
+          const nextDomains = [
+            payload.alert.domain,
+            ...recentDomains.filter((domain) => domain !== payload.alert.domain),
+          ].slice(0, 3);
           next[idx] = {
             ...current,
             updatedAt: payload.alert.time,
@@ -930,6 +983,7 @@ export function ChatWorkspace() {
             status: current.status ?? "auto",
             activation: payload.alert.title,
             riskLevel: payload.alert.severity,
+            recentDomains: nextDomains,
           };
           return next;
         }
@@ -937,21 +991,72 @@ export function ChatWorkspace() {
         return [
           {
             id: payload.alert.roomId,
-            type: "case",
             label: patient?.name ?? payload.alert.patientId,
             sublabel: patient
               ? `${patient.location}-${patient.bed} · ${payload.alert.title}`
               : payload.alert.title,
             patientId: payload.alert.patientId,
+            patientCode: patient?.patientId,
             riskLevel: payload.alert.severity,
             status: "auto",
             activation: payload.alert.title,
+            recentDomains: [payload.alert.domain],
             updatedAt: payload.alert.time,
             unread: 1,
           },
           ...prev,
         ];
       });
+      if (payload.insightUpdate) {
+        setInsightsByPatient((prev) => {
+          const current = prev[payload.alert.patientId] ?? [];
+          const exists = current.some(
+            (insight) => insight.key === payload.insightUpdate?.domain,
+          );
+          const updated = exists
+            ? current.map((insight) =>
+                insight.key === payload.insightUpdate?.domain
+                  ? {
+                      ...insight,
+                      status: payload.insightUpdate?.status ?? insight.status,
+                      lastUpdated: payload.insightUpdate?.lastUpdated ?? insight.lastUpdated,
+                      standardized:
+                        payload.insightUpdate?.standardized ?? insight.standardized,
+                      drivers: payload.insightUpdate?.drivers ?? insight.drivers,
+                      rawOutputs: payload.insightUpdate?.rawOutputs ?? insight.rawOutputs,
+                      evidence: payload.insightUpdate?.evidence ?? insight.evidence,
+                      confidence: payload.insightUpdate?.confidence ?? insight.confidence,
+                      quality: payload.insightUpdate?.quality ?? insight.quality,
+                    }
+                  : insight,
+              )
+            : [
+                ...current,
+                {
+                  key: payload.insightUpdate.domain,
+                  title: domainLabel[payload.insightUpdate.domain],
+                  status: payload.insightUpdate.status ?? "active",
+                  lastUpdated: payload.insightUpdate.lastUpdated,
+                  standardized: payload.insightUpdate.standardized,
+                  drivers: payload.insightUpdate.drivers,
+                  rawOutputs: payload.insightUpdate.rawOutputs ?? [],
+                  evidence: payload.insightUpdate.evidence ?? [],
+                  confidence: payload.insightUpdate.confidence ?? "-",
+                  quality: payload.insightUpdate.quality ?? "limited",
+                },
+              ];
+          return {
+            ...prev,
+            [payload.alert.patientId]: updated,
+          };
+        });
+      }
+      if (payload.summaryUpdate) {
+        setSummaryByPatientState((prev) => ({
+          ...prev,
+          [payload.alert.patientId]: payload.summaryUpdate ?? prev[payload.alert.patientId],
+        }));
+      }
       setSystemStatus((prev) => ({ ...prev, lastSync: "just now" }));
     };
 
@@ -982,6 +1087,34 @@ export function ChatWorkspace() {
             label: "Imaging result available (Lesion detected)",
             type: "ai",
           },
+          insightUpdate: {
+            domain: "imaging",
+            lastUpdated: "14:25",
+            standardized: [
+              { label: "Lesion Detected", value: "Yes" },
+              { label: "Volume", value: "13.1 ml" },
+              { label: "Progression", value: "Worsening" },
+              { label: "Urgency Flag", value: "HIGH" },
+            ],
+            rawOutputs: [
+              "Lesion segmentation mask (CTA)",
+              "Volume delta +3.4 ml",
+            ],
+            evidence: ["CTA snapshot 14:25", "PACS series 12-3400"],
+            confidence: "0.92",
+            quality: "good",
+          },
+          summaryUpdate: {
+            lastUpdated: "14:25",
+            structured: [
+              { label: "Risk Level", value: "HIGH (Imaging alert)" },
+              { label: "Main Findings", value: "CTA 신규 병변 감지" },
+              { label: "Recent Changes", value: "Urgency flag HIGH 유지" },
+            ],
+            narrative:
+              "CTA 분석에서 신규 병변이 확인되어 urgency flag가 유지되었습니다. 해당 이벤트가 케이스 룸과 타임라인에 반영되었습니다.",
+            evidence: ["Imaging analysis update", "CTA snapshot 14:25"],
+          },
         });
       }, 5000),
       window.setTimeout(() => {
@@ -1009,6 +1142,34 @@ export function ChatWorkspace() {
             time: "14:28",
             label: "ICU risk update 68 → 82",
             type: "ai",
+          },
+          insightUpdate: {
+            domain: "icu",
+            lastUpdated: "14:28",
+            standardized: [
+              { label: "Risk Score", value: "82 / 100" },
+              { label: "Risk Level", value: "HIGH" },
+              { label: "Trend (6h)", value: "Rising" },
+            ],
+            drivers: ["MAP drop", "Lactate 상승", "SpO2 변동"],
+            rawOutputs: [
+              "Deterioration probability 0.82",
+              "Feature contribution: MAP 0.27, Lactate 0.22, SpO2 0.16",
+            ],
+            evidence: ["Vitals 48h", "Lab panel 24h"],
+            confidence: "0.84",
+            quality: "good",
+          },
+          summaryUpdate: {
+            lastUpdated: "14:28",
+            structured: [
+              { label: "Risk Level", value: "HIGH (ICU deterioration)" },
+              { label: "Main Findings", value: "MAP drop + lactate 상승" },
+              { label: "Recent Changes", value: "Risk 68 → 82" },
+            ],
+            narrative:
+              "ICU 시계열 분석에서 위험도가 상승했습니다. 주요 드라이버는 MAP 하락과 lactate 상승이며, 변화가 타임라인에 기록되었습니다.",
+            evidence: ["ICU risk update", "Lab panel log"],
           },
         });
       }, 12000),
@@ -1038,6 +1199,33 @@ export function ChatWorkspace() {
             label: "ECG arrhythmia risk increased",
             type: "ai",
           },
+          insightUpdate: {
+            domain: "ecg",
+            lastUpdated: "14:32",
+            standardized: [
+              { label: "Arrhythmia Risk", value: "HIGH" },
+              { label: "Rhythm Trend", value: "Worsening" },
+              { label: "Key Segments", value: "Lead II 14:10-14:20" },
+            ],
+            rawOutputs: [
+              "Arrhythmia probability 0.87",
+              "Rhythm instability index 0.76",
+            ],
+            evidence: ["ECG waveform 14:20", "12-lead report v2"],
+            confidence: "0.89",
+            quality: "good",
+          },
+          summaryUpdate: {
+            lastUpdated: "14:32",
+            structured: [
+              { label: "Risk Level", value: "HIGH (Arrhythmia)" },
+              { label: "Main Findings", value: "리듬 불안정 증가" },
+              { label: "Recent Changes", value: "Arrhythmia risk 상승" },
+            ],
+            narrative:
+              "ECG 표준화 지표에서 리듬 불안정이 증가했습니다. 알림 이벤트가 케이스 룸과 타임라인에 반영되었습니다.",
+            evidence: ["ECG inference update", "Vitals trend log"],
+          },
         });
       }, 20000),
     ];
@@ -1049,7 +1237,7 @@ export function ChatWorkspace() {
   }, []);
 
   const allRooms = useMemo(
-    () => [...caseRoomItems, ...teamRooms, ...archivedRooms],
+    () => [...caseRoomItems, ...archivedRooms],
     [caseRoomItems],
   );
   const activeRoom = useMemo(
@@ -1059,9 +1247,9 @@ export function ChatWorkspace() {
   const patient = useMemo(
     () =>
       activeRoom.patientId
-        ? patients.find((item) => item.id === activeRoom.patientId) ?? null
+        ? patientRoster.find((item) => item.id === activeRoom.patientId) ?? null
         : null,
-    [activeRoom],
+    [activeRoom, patientRoster],
   );
 
   const sortedCaseRooms = useMemo(
@@ -1078,15 +1266,9 @@ export function ChatWorkspace() {
   const messages = messageMap[activeRoom.id] ?? [];
   const timelineEvents = timelineMap[activeRoom.id] ?? [];
   const domainInsights = patient
-    ? domainInsightsByPatient[patient.id] ?? []
+    ? insightsByPatient[patient.id] ?? []
     : [];
-  const summary = patient ? summaryByPatient[patient.id] : null;
-  const patientModelSummary = summary
-    ? summary.structured
-        .slice(0, 2)
-        .map((item) => `${item.label}: ${item.value}`)
-        .join(" · ")
-    : "최근 모델 요약 없음";
+  const summary = patient ? summaryByPatientState[patient.id] : null;
   const activityLog = patient ? activityLogByPatient[patient.id] ?? [] : [];
   const connectionDot =
     connectionState === "connected"
@@ -1113,7 +1295,7 @@ export function ChatWorkspace() {
           </h3>
           <p className="text-sm text-slate-600">
             모델 결과 → 표준화 지표 → 알림 → 케이스 룸 → 타임라인 → LLM 요약이
-            실제 워크플로우를 구동합니다.
+            실제 워크플로우를 구동합니다. 팀 알림은 모바일 앱에서 처리합니다.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
@@ -1150,23 +1332,25 @@ export function ChatWorkspace() {
 
       <DemoGuide />
 
-      <div className="grid gap-6 lg:grid-cols-[300px_minmax(0,1fr)_360px]">
+      <div className="grid gap-6 lg:grid-cols-[300px_minmax(0,1fr)_420px]">
         <Card className="border-slate-200 bg-white shadow-sm">
           <div className="border-b border-slate-200 p-4 space-y-3">
             <div className="flex items-center justify-between">
               <h4 className="text-sm font-semibold text-slate-700 flex items-center gap-2">
                 <MessageSquare className="h-4 w-4 text-slate-500" />
-                케이스 룸 네비게이션
+                케이스 룸 리스트
               </h4>
               <Button size="sm" variant="outline">
                 새 케이스
               </Button>
             </div>
-            <Input placeholder="환자/채널 검색" className="bg-slate-50" />
+            <Input placeholder="환자 케이스 검색" className="bg-slate-50" />
             <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600 space-y-1">
               <p className="font-semibold text-slate-700">Case room 정책</p>
               <p>AI 알림/의료진 액션/고위험 상태 진입 시 자동 활성화됩니다.</p>
+              <p>모든 환자는 케이스 룸으로 유지하지 않습니다.</p>
               <p>수동 생성과 pin이 가능하며, 비활성 24시간 후 자동 아카이빙됩니다.</p>
+              <p>팀 단위 커뮤니케이션은 모바일 알림 앱에서 처리합니다.</p>
             </div>
           </div>
           <ScrollArea className="h-[680px]">
@@ -1186,14 +1370,7 @@ export function ChatWorkspace() {
                 showStatus
                 activeCountLabel="4 active / 24 admitted"
               />
-              <RoomSection
-                title="팀 채널"
-                rooms={teamRooms}
-                activeRoomId={activeRoom.id}
-                onSelect={setActiveRoomId}
-                icon={Users}
-              />
-              <ClinicianDirectory clinicians={clinicians} />
+              <MobileAlertCard />
               <RoomSection
                 title="아카이브"
                 subtitle="최근 24시간 내 비활성"
@@ -1208,117 +1385,92 @@ export function ChatWorkspace() {
         </Card>
 
         <Card className="border-slate-200 bg-white shadow-sm">
-          <PatientHeader
-            room={activeRoom}
-            patient={patient}
-            role={role}
-            modelSummary={patientModelSummary}
-          />
-
+          <CaseHeader room={activeRoom} patient={patient} />
           <div className="px-4 pb-4 space-y-4">
-            <CasePipeline />
-            <Tabs defaultValue="chat" className="w-full">
-              <TabsList className="w-full justify-start bg-slate-100">
-                <TabsTrigger value="chat">Chat</TabsTrigger>
-                <TabsTrigger value="timeline">Timeline</TabsTrigger>
-                <TabsTrigger value="data">Data</TabsTrigger>
-              </TabsList>
-              <TabsContent value="chat" className="mt-4 space-y-4">
-                <ScrollArea className="h-[420px] pr-2">
-                  <div className="space-y-3">
-                    {messages.map((message) => (
-                      <MessageBubble key={message.id} message={message} />
-                    ))}
-                  </div>
-                </ScrollArea>
-                <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
-                  <Input
-                    placeholder="메시지 작성 (데모)"
-                    className="bg-white"
-                    disabled
-                  />
-                  <Button size="sm" disabled>
-                    전송
-                  </Button>
-                </div>
-              </TabsContent>
-              <TabsContent value="timeline" className="mt-4">
-                <TimelinePanel patient={patient} timeline={timelineEvents} />
-              </TabsContent>
-              <TabsContent value="data" className="mt-4">
-                <DataPanel patient={patient} insights={domainInsights} role={role} />
-              </TabsContent>
-            </Tabs>
+            <ScrollArea className="h-[520px] pr-2">
+              <div className="space-y-3">
+                {messages.map((message) => (
+                  <MessageBubble key={message.id} message={message} />
+                ))}
+              </div>
+            </ScrollArea>
+            <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
+              <Input
+                placeholder="메시지 작성 (데모)"
+                className="bg-white"
+                disabled
+              />
+              <Button size="sm" disabled>
+                전송
+              </Button>
+            </div>
           </div>
         </Card>
 
-        <div className="space-y-4">
-          <Card className="border-slate-200 bg-white p-4 shadow-sm">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
-                  Data health
-                </p>
-                <p className="text-sm font-semibold text-slate-700">
-                  실시간 데이터 상태
-                </p>
-              </div>
-              <Badge
-                variant="outline"
-                className="border border-slate-200 bg-slate-50 text-slate-600"
-              >
-                Sync {systemStatus.lastSync}
-              </Badge>
-            </div>
-            <div className="mt-3 space-y-2 text-xs text-slate-600">
-              {systemStatus.warnings.map((warning) => (
-                <div
-                  key={warning}
-                  className="flex items-center justify-between rounded-lg border border-amber-200 bg-amber-50 px-3 py-2"
-                >
-                  <span>{warning}</span>
-                  <AlertTriangle className="h-3.5 w-3.5 text-amber-600" />
+        <Card className="border-slate-200 bg-white shadow-sm">
+          <Tabs defaultValue="overview" className="w-full">
+            <div className="border-b border-slate-200 px-4 py-3 space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
+                    Patient panel
+                  </p>
+                  <p className="text-sm font-semibold text-slate-700">
+                    {patient ? `${patient.name} · ${patient.location}` : "환자 케이스 선택"}
+                  </p>
                 </div>
-              ))}
+                {patient && (
+                  <Badge
+                    variant="outline"
+                    className={`border ${riskTone[patient.riskLevel].className}`}
+                  >
+                    {riskTone[patient.riskLevel].label}
+                  </Badge>
+                )}
+              </div>
+              <TabsList className="w-full justify-start bg-slate-100">
+                <TabsTrigger value="overview">Patient Overview</TabsTrigger>
+                <TabsTrigger value="analysis">AI Analysis</TabsTrigger>
+                <TabsTrigger value="timeline">Timeline</TabsTrigger>
+                <TabsTrigger value="documents">Clinical Documents</TabsTrigger>
+              </TabsList>
             </div>
-          </Card>
-
-          <Card className="border-slate-200 bg-white p-4 shadow-sm">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
-                  Clinical standardization
-                </p>
-                <p className="text-sm font-semibold text-slate-700">
-                  Feature Standardization Layer
-                </p>
-              </div>
-              <ShieldCheck className="h-4 w-4 text-slate-500" />
+            <div className="p-4">
+              <TabsContent value="overview" className="mt-0">
+                <PatientOverviewPanel
+                  patient={patient}
+                  summary={summary}
+                  insights={domainInsights}
+                  timeline={timelineEvents}
+                  systemStatus={systemStatus}
+                />
+              </TabsContent>
+              <TabsContent value="analysis" className="mt-0">
+                <AIAnalysisPanel
+                  patient={patient}
+                  insights={domainInsights}
+                  role={role}
+                  systemStatus={systemStatus}
+                />
+              </TabsContent>
+              <TabsContent value="timeline" className="mt-0">
+                <TimelinePanel
+                  patient={patient}
+                  timeline={timelineEvents}
+                  summary={summary}
+                  role={role}
+                  activityLog={activityLog}
+                />
+              </TabsContent>
+              <TabsContent value="documents" className="mt-0">
+                <ClinicalDocumentsPanel
+                  patient={patient}
+                  documents={patient ? documentsByPatient[patient.id] ?? [] : []}
+                />
+              </TabsContent>
             </div>
-            <div className="mt-3 grid gap-2 text-xs text-slate-600">
-              <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
-                <span>Raw model outputs</span>
-                <span className="font-semibold text-slate-700">Hidden</span>
-              </div>
-              <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
-                <span>Clinical indicators</span>
-                <span className="font-semibold text-slate-700">Visible</span>
-              </div>
-              <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
-                <span>Alert trigger</span>
-                <span className="font-semibold text-slate-700">On change</span>
-              </div>
-            </div>
-          </Card>
-
-          <AIInsightPanel
-            patient={patient}
-            insights={domainInsights}
-            summary={summary}
-            role={role}
-            activityLog={activityLog}
-          />
-        </div>
+          </Tabs>
+        </Card>
       </div>
     </div>
   );
@@ -1397,7 +1549,7 @@ type RoomSectionProps = {
   rooms: Room[];
   activeRoomId: string;
   onSelect: (id: string) => void;
-  icon?: typeof Users;
+  icon?: IconType;
   showStatus?: boolean;
 };
 
@@ -1439,7 +1591,28 @@ function RoomSection({
                 <p className="text-sm font-semibold text-slate-900">
                   {room.label}
                 </p>
+                {room.patientCode && (
+                  <p className="text-[11px] text-slate-400">
+                    ID {room.patientCode}
+                  </p>
+                )}
                 <p className="text-xs text-slate-500">{room.sublabel}</p>
+                {room.recentDomains && room.recentDomains.length > 0 && (
+                  <div className="mt-2 flex items-center gap-2 text-xs text-slate-500">
+                    {room.recentDomains.map((domain) => {
+                      const Icon = domainIcon[domain];
+                      return (
+                        <span
+                          key={`${room.id}-${domain}`}
+                          className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2 py-1"
+                        >
+                          <Icon className="h-3 w-3 text-slate-500" />
+                          {domainLabel[domain]}
+                        </span>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
               <div className="text-right text-xs text-slate-500">
                 <p>{room.updatedAt}</p>
@@ -1480,113 +1653,40 @@ function RoomSection({
   );
 }
 
-type ClinicianDirectoryProps = {
-  clinicians: Clinician[];
-};
-
-function ClinicianDirectory({ clinicians }: ClinicianDirectoryProps) {
-  const onlineCount = clinicians.filter((clinician) => clinician.status !== "offline").length;
-
+function MobileAlertCard() {
   return (
-    <div className="space-y-2">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">
-          <Users className="h-3.5 w-3.5" />
-          의료진 목록
-        </div>
-        <Badge
-          variant="outline"
-          className="border border-slate-200 bg-slate-50 text-slate-600"
-        >
-          {onlineCount} online
-        </Badge>
+    <Card className="border-slate-200 bg-slate-50 p-4">
+      <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">
+        <Smartphone className="h-3.5 w-3.5" />
+        Mobile Alert App
       </div>
-      <p className="text-xs text-slate-500">
-        빠른 멘션/1:1 메시지/그룹 초대를 지원합니다.
+      <p className="mt-2 text-xs text-slate-600">
+        팀 단위 알림 수신과 케이스 즉시 진입은 모바일 앱에서 처리합니다.
       </p>
-      <div className="space-y-2">
-        {clinicians.map((clinician) => (
-          <div
-            key={clinician.id}
-            className="rounded-xl border border-slate-200 bg-white p-3"
-          >
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex items-center gap-3">
-                <div className="relative">
-                  <div className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-100 text-xs font-semibold text-slate-600">
-                    {clinician.name.slice(0, 1)}
-                  </div>
-                  <span
-                    className={`absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border border-white ${clinicianStatusTone[clinician.status]}`}
-                  />
-                </div>
-                <div>
-                  <p className="text-sm font-semibold text-slate-900">
-                    {clinician.name}
-                  </p>
-                  <p className="text-xs text-slate-500">
-                    {clinician.role} · {clinician.team}
-                  </p>
-                </div>
-              </div>
-              <div className="flex items-center gap-2 text-xs text-slate-500">
-                <Button size="sm" variant="outline" className="text-xs">
-                  @멘션
-                </Button>
-                <Button size="sm" variant="outline" className="text-xs">
-                  1:1
-                </Button>
-                <Button size="sm" variant="outline" className="text-xs">
-                  초대
-                </Button>
-              </div>
-            </div>
-          </div>
-        ))}
+      <div className="mt-3 space-y-2 text-xs text-slate-600">
+        <div className="rounded-lg border border-slate-200 bg-white px-3 py-2">
+          ICU Team: High risk detected - Patient 123
+        </div>
+        <div className="rounded-lg border border-slate-200 bg-white px-3 py-2">
+          Stroke Team: New CT finding - review needed
+        </div>
       </div>
-    </div>
+    </Card>
   );
 }
 
-type PatientHeaderProps = {
+type CaseHeaderProps = {
   room: Room;
   patient: Patient | null;
-  role: Role;
-  modelSummary?: string;
 };
 
-export function PatientHeader({
-  room,
-  patient,
-  role,
-  modelSummary,
-}: PatientHeaderProps) {
+function CaseHeader({ room, patient }: CaseHeaderProps) {
   if (!patient) {
     return (
       <div className="border-b border-slate-200 p-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
-              Team Channel
-            </p>
-            <h4 className="text-lg font-semibold text-slate-900">{room.label}</h4>
-            <p className="text-sm text-slate-600">{room.sublabel}</p>
-          </div>
-          <Badge
-            variant="outline"
-            className="border border-slate-200 bg-slate-50 text-slate-600"
-          >
-            팀 협업
-          </Badge>
-        </div>
-        <div className="mt-4 flex flex-wrap gap-2 text-xs text-slate-500">
-          <span className="rounded-full border border-slate-200 bg-white px-3 py-1">
-            케이스 룸 연결 필요
-          </span>
-          <span className="rounded-full border border-slate-200 bg-white px-3 py-1">
-            AI 알림 공유 전용
-          </span>
-        </div>
+        <p className="text-sm text-slate-600">
+          선택된 케이스 룸이 없습니다. 좌측에서 환자 케이스 룸을 선택하세요.
+        </p>
       </div>
     );
   }
@@ -1601,13 +1701,13 @@ export function PatientHeader({
           <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
             Case Room
           </p>
-          <h4 className="text-xl font-semibold text-slate-900">
-            {patient.name}
-          </h4>
+          <h4 className="text-xl font-semibold text-slate-900">{patient.name}</h4>
           <p className="text-sm text-slate-600">
-            {patient.age}세 · {patient.gender} · {patient.location}
+            {patient.patientId} · {patient.age}세 · {patient.gender}
           </p>
-          <p className="text-xs text-slate-500">Patient ID {patient.patientId}</p>
+          <p className="text-xs text-slate-500">
+            {patient.location} · {patient.bed}
+          </p>
         </div>
         <div className="flex flex-col items-end gap-2">
           <Badge variant="outline" className={`border ${risk.className}`}>
@@ -1616,44 +1716,6 @@ export function PatientHeader({
           <Badge variant="outline" className={`border ${status.className}`}>
             {status.label}
           </Badge>
-        </div>
-      </div>
-      <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
-        {patient.diagnosisTags.map((tag) => (
-          <span
-            key={tag}
-            className="rounded-full border border-slate-200 bg-white px-3 py-1"
-          >
-            {tag}
-          </span>
-        ))}
-      </div>
-      <p className="text-xs text-slate-500">
-        최근 모델 요약: {modelSummary}
-      </p>
-      <div className="grid gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600 md:grid-cols-2">
-        <div>
-          <p className="font-semibold text-slate-700">Location / Bed</p>
-          <p>
-            {patient.location} · {patient.bed}
-          </p>
-        </div>
-        <div>
-          <p className="font-semibold text-slate-700">연동 시스템</p>
-          <div className="mt-1 flex flex-wrap gap-2">
-            <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2 py-1">
-              <Database className="h-3 w-3" />
-              EHR {patient.ehrId}
-            </span>
-            <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2 py-1">
-              <MonitorCheck className="h-3 w-3" />
-              PACS {patient.pacsId}
-            </span>
-            <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2 py-1">
-              <Activity className="h-3 w-3" />
-              Vitals
-            </span>
-          </div>
         </div>
       </div>
       <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
@@ -1671,13 +1733,8 @@ export function PatientHeader({
           </span>
         )}
         <span className="rounded-full border border-slate-200 bg-white px-3 py-1">
-          Last sync 2 min ago
+          Last update {room.updatedAt}
         </span>
-        {role !== "Nurse" && (
-          <Button size="sm" variant="outline" className="text-xs">
-            데이터 내보내기
-          </Button>
-        )}
       </div>
       <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
         <Button size="sm" variant="outline" className="text-xs">
@@ -1689,6 +1746,200 @@ export function PatientHeader({
           아카이브
         </Button>
       </div>
+    </div>
+  );
+}
+
+type PatientOverviewPanelProps = {
+  patient: Patient | null;
+  summary: LlmSummary | null;
+  insights: DomainInsight[];
+  timeline: TimelineEvent[];
+  systemStatus: SystemStatus;
+};
+
+function PatientOverviewPanel({
+  patient,
+  summary,
+  insights,
+  timeline,
+  systemStatus,
+}: PatientOverviewPanelProps) {
+  if (!patient) {
+    return (
+      <Card className="border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+        환자 케이스를 선택하면 Patient Overview가 표시됩니다.
+      </Card>
+    );
+  }
+
+  const risk = riskTone[patient.riskLevel];
+  const status = statusTone[patient.status];
+  const recentEvents = timeline.slice(-3).reverse();
+  const findIndicator = (domain: DomainKey, label: string) => {
+    const insight = insights.find((item) => item.key === domain);
+    if (!insight || insight.status === "no-data") return "No data";
+    return (
+      insight.standardized.find((item) => item.label === label)?.value ?? "No data"
+    );
+  };
+
+  const imagingValue =
+    findIndicator("imaging", "Urgency Flag") !== "No data"
+      ? findIndicator("imaging", "Urgency Flag")
+      : findIndicator("imaging", "Lesion Detected");
+
+  const domainSnapshot = [
+    { label: "Cardio Risk", value: findIndicator("ecg", "Arrhythmia Risk") },
+    { label: "ICU Deterioration", value: findIndicator("icu", "Risk Level") },
+    { label: "Imaging Alert", value: imagingValue },
+    { label: "Neuro Risk", value: findIndicator("neuro", "Decline Risk Level") },
+  ];
+
+  return (
+    <div className="space-y-4">
+      <Card className="border-slate-200 bg-white p-4">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
+              Patient Overview
+            </p>
+            <p className="text-lg font-semibold text-slate-900">
+              {patient.name}
+            </p>
+            <p className="text-sm text-slate-600">
+              {patient.patientId} · {patient.age}세 · {patient.gender}
+            </p>
+            <p className="text-xs text-slate-500">
+              {patient.location} · {patient.bed}
+            </p>
+          </div>
+          <div className="flex flex-col items-end gap-2">
+            <Badge variant="outline" className={`border ${risk.className}`}>
+              {risk.label}
+            </Badge>
+            <Badge variant="outline" className={`border ${status.className}`}>
+              {status.label}
+            </Badge>
+          </div>
+        </div>
+        <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-slate-600">
+          {patient.diagnosisTags.map((tag) => (
+            <span
+              key={tag}
+              className="rounded-full border border-slate-200 bg-white px-3 py-1"
+            >
+              {tag}
+            </span>
+          ))}
+          <Badge
+            variant="outline"
+            className="border border-slate-200 bg-slate-50 text-slate-600"
+          >
+            Last sync {systemStatus.lastSync}
+          </Badge>
+        </div>
+        <div className="mt-4 grid gap-3 text-xs text-slate-600 md:grid-cols-2">
+          <div>
+            <p className="font-semibold text-slate-700">Location / Bed</p>
+            <p>
+              {patient.location} · {patient.bed}
+            </p>
+          </div>
+          <div>
+            <p className="font-semibold text-slate-700">연동 시스템</p>
+            <div className="mt-1 flex flex-wrap gap-2">
+              <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2 py-1">
+                <Database className="h-3 w-3" />
+                EHR {patient.ehrId}
+              </span>
+              <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2 py-1">
+                <MonitorCheck className="h-3 w-3" />
+                PACS {patient.pacsId}
+              </span>
+              <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2 py-1">
+                <Activity className="h-3 w-3" />
+                Vitals
+              </span>
+            </div>
+          </div>
+        </div>
+      </Card>
+
+      <Card className="border-slate-200 bg-white p-4">
+        <div className="flex items-center justify-between">
+          <h4 className="text-sm font-semibold text-slate-700">
+            Risk Summary
+          </h4>
+          <Badge
+            variant="outline"
+            className="border border-slate-200 bg-slate-50 text-slate-600"
+          >
+            Structured
+          </Badge>
+        </div>
+        <div className="mt-3 space-y-2 text-xs text-slate-600">
+          {summary ? (
+            summary.structured.map((item) => (
+              <div key={item.label} className="flex items-center justify-between">
+                <span className="font-semibold text-slate-700">
+                  {item.label}
+                </span>
+                <span>{item.value}</span>
+              </div>
+            ))
+          ) : (
+            <p>요약 데이터가 아직 없습니다.</p>
+          )}
+        </div>
+        <div className="mt-4 grid gap-2 text-xs text-slate-600 md:grid-cols-2">
+          {domainSnapshot.map((item) => (
+            <div
+              key={item.label}
+              className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2"
+            >
+              <p className="text-[11px] uppercase tracking-[0.2em] text-slate-400">
+                {item.label}
+              </p>
+              <p className="mt-1 text-sm font-semibold text-slate-700">
+                {item.value}
+              </p>
+            </div>
+          ))}
+        </div>
+      </Card>
+
+      <Card className="border-slate-200 bg-white p-4">
+        <div className="flex items-center justify-between">
+          <h4 className="text-sm font-semibold text-slate-700">
+            최근 주요 이벤트
+          </h4>
+          <Badge
+            variant="outline"
+            className="border border-slate-200 bg-slate-50 text-slate-600"
+          >
+            Timeline
+          </Badge>
+        </div>
+        <div className="mt-3 space-y-2 text-xs text-slate-600">
+          {recentEvents.length > 0 ? (
+            recentEvents.map((event) => (
+              <div
+                key={`${event.time}-${event.label}`}
+                className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2"
+              >
+                <span className="font-semibold text-slate-700">{event.time}</span>
+                <span className="flex-1 text-slate-600">{event.label}</span>
+                <span className="uppercase tracking-[0.2em] text-[10px] text-slate-400">
+                  {event.type}
+                </span>
+              </div>
+            ))
+          ) : (
+            <p>최근 이벤트가 없습니다.</p>
+          )}
+        </div>
+      </Card>
     </div>
   );
 }
@@ -1718,8 +1969,8 @@ function CasePipeline() {
           "Clinical standardization",
           "Risk/Trend abstraction",
           "Alert/Triage",
-          "Case room update",
-          "Timeline + LLM Summary",
+          "Case room activation",
+          "Timeline + LLM Summary (timeline 기반)",
         ].map((step) => (
           <div
             key={step}
@@ -1753,39 +2004,55 @@ function DemoGuide() {
         </Badge>
       </div>
       <div className="grid gap-6 lg:grid-cols-2 text-sm text-slate-600">
-        <div className="space-y-3">
+        <div className="space-y-4">
           <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">
-            제공 기능
+            데모에서 체험 가능한 기능
           </p>
           <ol className="space-y-2 text-sm">
-            <li>1. 실시간 채팅 (의료진 메시지 + AI 이벤트 메시지)</li>
-            <li>2. AI 경고/알림 (모델 변화 기반 자동 삽입)</li>
-            <li>3. AI 분석 결과 표시 (ECG/Imaging/ICU/Neuro)</li>
-            <li>4. 케이스 Timeline (검사/추론/액션 기록)</li>
-            <li>5. LLM 요약 (구조화 지표 + 근거 링크)</li>
+            <li>1. AI 기반 케이스 룸 자동 생성/활성화</li>
+            <li>2. 실시간 알림 (WebSocket 모킹)</li>
+            <li>3. AI Analysis 탭 (ECG/Imaging/ICU/Neuro)</li>
+            <li>4. Timeline 기반 이벤트 기록/요약</li>
+            <li>5. Clinical Documents 검색 (VectorDB + LLM)</li>
           </ol>
           <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs">
-            <p className="font-semibold text-slate-700">작동 흐름 예시</p>
+            <p className="font-semibold text-slate-700">작동 구조 요약</p>
             <ol className="mt-2 space-y-1">
-              <li>1) ECG/시계열 데이터 도착 → 모델 분석</li>
-              <li>2) Standardization layer → Risk/Trend 추출</li>
-              <li>3) WebSocket 모킹 → 알림 생성</li>
-              <li>4) 케이스 룸 자동 생성/갱신</li>
-              <li>5) 의료진 협업 + Timeline 기록</li>
-              <li>6) LLM 요약 업데이트</li>
+              <li>1) 데이터 수집 → 모델 분석</li>
+              <li>2) Standardization layer → 지표 추출</li>
+              <li>3) 알림 생성 → 케이스 룸 활성화</li>
+              <li>4) 협업 메시지 + Timeline 기록</li>
+              <li>5) LLM 요약 업데이트 (Timeline 기반)</li>
+              <li>6) 문헌 검색 + 근거 요약 전달</li>
             </ol>
           </div>
+          <CasePipeline />
         </div>
-        <div className="space-y-3">
-          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">
-            WebSocket 모킹 구조
-          </p>
-          <p className="text-sm text-slate-600">
-            setTimeout 기반 이벤트로 실시간 알림/채팅 흐름을 시뮬레이션합니다.
-          </p>
-          <pre className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700 whitespace-pre-wrap">
-            {websocketMockSnippet}
-          </pre>
+        <div className="space-y-4">
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs">
+            <p className="font-semibold text-slate-700">디바이스 역할 분리</p>
+            <div className="mt-2 space-y-1">
+              <p>Desktop: 케이스 분석 + 협업 + AI 해석</p>
+              <p>Mobile: 팀 알림 수신 + 케이스 바로 진입</p>
+            </div>
+          </div>
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs">
+            <p className="font-semibold text-slate-700">LLM/VectorDB 정책</p>
+            <p className="mt-2">
+              문헌 검색과 근거 요약만 수행하며, 진단/치료 권고는 제공하지 않습니다.
+            </p>
+          </div>
+          <div className="space-y-2">
+            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">
+              WebSocket 모킹 구조
+            </p>
+            <p className="text-sm text-slate-600">
+              setTimeout 기반 이벤트로 실시간 알림/채팅 흐름을 시뮬레이션합니다.
+            </p>
+            <pre className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700 whitespace-pre-wrap">
+              {websocketMockSnippet}
+            </pre>
+          </div>
         </div>
       </div>
     </Card>
@@ -1824,9 +2091,18 @@ function MessageBubble({ message }: MessageBubbleProps) {
 type TimelinePanelProps = {
   patient: Patient | null;
   timeline: TimelineEvent[];
+  summary: LlmSummary | null;
+  role: Role;
+  activityLog: ActivityLog[];
 };
 
-export function TimelinePanel({ patient, timeline }: TimelinePanelProps) {
+function TimelinePanel({
+  patient,
+  timeline,
+  summary,
+  role,
+  activityLog,
+}: TimelinePanelProps) {
   if (!patient) {
     return (
       <Card className="border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
@@ -1858,10 +2134,18 @@ export function TimelinePanel({ patient, timeline }: TimelinePanelProps) {
           </Badge>
         </div>
         <p className="mt-3 text-sm text-slate-600">
-          최근 12시간 동안 모델 업데이트와 의료진 액션 로그가 기록되었습니다.
-          요약은 타임라인 이벤트를 기반으로 생성됩니다.
+          모델 업데이트, 의료진 액션, 검사 이벤트가 시간순으로 기록됩니다.
+          LLM 요약은 타임라인 이벤트만을 입력으로 사용합니다.
         </p>
       </Card>
+
+      {summary ? (
+        <LLMSummaryPanel summary={summary} />
+      ) : (
+        <Card className="border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+          요약 데이터가 아직 없습니다.
+        </Card>
+      )}
 
       <Card className="border-slate-200 bg-white p-4">
         <h4 className="text-sm font-semibold text-slate-700 mb-3">
@@ -1887,21 +2171,35 @@ export function TimelinePanel({ patient, timeline }: TimelinePanelProps) {
           ))}
         </div>
       </Card>
+
+      {role === "Admin" ? (
+        <AuditLogPanel activityLog={activityLog} />
+      ) : (
+        <Card className="border-slate-200 bg-slate-50 p-4 text-xs text-slate-500">
+          Audit log는 관리자 권한에서만 조회할 수 있습니다.
+        </Card>
+      )}
     </div>
   );
 }
 
-type DataPanelProps = {
+type AIAnalysisPanelProps = {
   patient: Patient | null;
   insights: DomainInsight[];
   role: Role;
+  systemStatus: SystemStatus;
 };
 
-function DataPanel({ patient, insights, role }: DataPanelProps) {
+function AIAnalysisPanel({
+  patient,
+  insights,
+  role,
+  systemStatus,
+}: AIAnalysisPanelProps) {
   if (!patient) {
     return (
       <Card className="border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
-        환자 케이스를 선택하면 데이터 탭이 활성화됩니다.
+        환자 케이스를 선택하면 AI Analysis 탭이 활성화됩니다.
       </Card>
     );
   }
@@ -1921,9 +2219,34 @@ function DataPanel({ patient, insights, role }: DataPanelProps) {
           </Badge>
         </div>
         <p className="mt-2 text-xs text-slate-600">
-          임상 지표는 표준화된 결과로 기본 노출됩니다. 근거 데이터는 클릭 시 상세
-          보기로 제공됩니다.
+          분석은 AI Analysis 탭에서만 노출됩니다. 임상 지표는 표준화된 결과로
+          기본 노출되며 근거 데이터는 클릭 시 상세 보기로 확인합니다.
         </p>
+      </Card>
+
+      <Card className="border-slate-200 bg-white p-4">
+        <div className="flex items-center justify-between">
+          <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
+            Data quality
+          </p>
+          <Badge
+            variant="outline"
+            className="border border-slate-200 bg-slate-50 text-slate-600"
+          >
+            Latency {systemStatus.dataLatency}
+          </Badge>
+        </div>
+        <div className="mt-3 space-y-2 text-xs text-slate-600">
+          {systemStatus.warnings.map((warning) => (
+            <div
+              key={warning}
+              className="flex items-center justify-between rounded-lg border border-amber-200 bg-amber-50 px-3 py-2"
+            >
+              <span>{warning}</span>
+              <AlertTriangle className="h-3.5 w-3.5 text-amber-600" />
+            </div>
+          ))}
+        </div>
       </Card>
 
       <div className="grid gap-3">
@@ -1939,80 +2262,116 @@ function DataPanel({ patient, insights, role }: DataPanelProps) {
   );
 }
 
-type AIInsightPanelProps = {
+type ClinicalDocumentsPanelProps = {
   patient: Patient | null;
-  insights: DomainInsight[];
-  summary: LlmSummary | null;
-  role: Role;
-  activityLog: ActivityLog[];
+  documents: ClinicalDocument[];
 };
 
-export function AIInsightPanel({
+function ClinicalDocumentsPanel({
   patient,
-  insights,
-  summary,
-  role,
-  activityLog,
-}: AIInsightPanelProps) {
-  if (!patient || !summary) {
+  documents,
+}: ClinicalDocumentsPanelProps) {
+  const [query, setQuery] = useState("");
+  const filteredDocuments = useMemo(() => {
+    const keyword = query.trim().toLowerCase();
+    if (!keyword) return documents;
+    return documents.filter((doc) => {
+      const pool = [doc.title, doc.summary, doc.tags.join(" ")].join(" ").toLowerCase();
+      return pool.includes(keyword);
+    });
+  }, [documents, query]);
+
+  if (!patient) {
     return (
-      <Card className="border-slate-200 bg-white p-6 shadow-sm">
-        <p className="text-sm text-slate-600">
-          환자 케이스를 선택하면 AI 분석 패널이 표시됩니다.
-        </p>
+      <Card className="border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+        환자 케이스를 선택하면 문헌 검색 탭이 활성화됩니다.
       </Card>
     );
   }
 
   return (
-    <Card className="border-slate-200 bg-white p-6 shadow-sm space-y-4">
-      <div>
-        <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
-          AI Insight Panel
+    <div className="space-y-4">
+      <Card className="border-slate-200 bg-white p-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
+              Evidence search
+            </p>
+            <p className="text-sm font-semibold text-slate-700">
+              Clinical Documents (VectorDB)
+            </p>
+          </div>
+          <Badge
+            variant="outline"
+            className="border border-slate-200 bg-slate-50 text-slate-600"
+          >
+            Evidence only
+          </Badge>
+        </div>
+        <p className="mt-2 text-xs text-slate-600">
+          문헌 검색은 병원 승인 문서/프로토콜/논문 요약본을 기반으로 하며,
+          진단/치료 추론은 제공하지 않습니다.
         </p>
-        <h4 className="text-lg font-semibold text-slate-900">
-          {patient.name} · {patient.location}
-        </h4>
-        <p className="text-xs text-slate-500">Last updated {summary.lastUpdated}</p>
+        <p className="mt-2 text-xs text-slate-500">
+          Responses are generated from hospital-approved documents only.
+        </p>
+      </Card>
+
+      <div className="flex items-center gap-2">
+        <Input
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="자연어 질의 입력 (데모)"
+          className="bg-white"
+        />
+        <Button size="sm" variant="outline">
+          검색
+        </Button>
       </div>
 
       <div className="space-y-3">
-        {insights.map((insight) => (
-          <DomainModuleCard
-            key={insight.key}
-            insight={insight}
-            role={role}
-          />
-        ))}
+        {filteredDocuments.length > 0 ? (
+          filteredDocuments.map((doc) => (
+            <Card key={doc.id} className="border-slate-200 bg-white p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold text-slate-900">
+                    {doc.title}
+                  </p>
+                  <p className="text-xs text-slate-500">
+                    {doc.source} · Updated {doc.updatedAt}
+                  </p>
+                </div>
+                <Badge
+                  variant="outline"
+                  className="border border-slate-200 bg-slate-50 text-slate-600"
+                >
+                  Document
+                </Badge>
+              </div>
+              <p className="mt-2 text-sm text-slate-600">{doc.summary}</p>
+              <div className="mt-3 flex flex-wrap gap-2 text-xs text-slate-600">
+                {doc.tags.map((tag) => (
+                  <span
+                    key={tag}
+                    className="rounded-full border border-slate-200 bg-white px-2 py-1"
+                  >
+                    {tag}
+                  </span>
+                ))}
+                <Button size="sm" variant="outline" className="text-xs">
+                  원문 보기
+                </Button>
+              </div>
+            </Card>
+          ))
+        ) : (
+          <Card className="border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+            검색 결과가 없습니다.
+          </Card>
+        )}
       </div>
-
-      <LLMSummaryPanel summary={summary} />
-
-      <div className="rounded-xl border border-slate-200 bg-white p-4">
-        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">
-          Clinician Questions
-        </p>
-        <div className="mt-3 flex flex-wrap gap-2">
-          <Button size="sm" variant="outline">
-            위험 증가 원인
-          </Button>
-          <Button size="sm" variant="outline">
-            주요 신호 요약
-          </Button>
-          <Button size="sm" variant="outline">
-            최근 6시간 변화
-          </Button>
-        </div>
-      </div>
-
-      {role === "Admin" ? (
-        <AuditLogPanel activityLog={activityLog} />
-      ) : (
-        <Card className="border-slate-200 bg-slate-50 p-4 text-xs text-slate-500">
-          Audit log는 관리자 권한에서만 조회할 수 있습니다.
-        </Card>
-      )}
-    </Card>
+    </div>
   );
 }
 

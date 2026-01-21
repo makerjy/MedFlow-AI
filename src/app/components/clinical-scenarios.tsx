@@ -22,7 +22,7 @@ export function ClinicalScenarios() {
       title: "Case Room Lifecycle",
       description: "협업, 타임라인, 데이터 탭을 한 흐름으로 통합",
       icon: MessageSquare,
-      points: ["자동 활성/핀/아카이브", "Chat + Timeline + Data", "팀 채널 연계"],
+      points: ["자동 활성/핀/아카이브", "Chat + Overview/Analysis/Timeline", "모바일 알림 연계"],
     },
     {
       title: "Clinical Standardization",

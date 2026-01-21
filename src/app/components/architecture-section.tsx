@@ -46,7 +46,7 @@ export function ArchitectureSection() {
                     <Layers className="w-8 h-8 text-blue-600" />
                     <div>
                       <h4 className="text-xl font-bold">Frontend Layer</h4>
-                      <p className="text-sm text-slate-600">Case room 기반 Clinical Workspace</p>
+                      <p className="text-sm text-slate-600">Case room 기반 Clinical Workspace + Mobile alert app</p>
                     </div>
                   </div>
                   <div className="flex flex-wrap gap-2">
@@ -55,6 +55,7 @@ export function ArchitectureSection() {
                     <Badge variant="outline">Tailwind CSS</Badge>
                     <Badge variant="outline">WebSocket</Badge>
                     <Badge variant="outline">Recharts</Badge>
+                    <Badge variant="outline">PWA</Badge>
                   </div>
                 </div>
 
@@ -84,7 +85,7 @@ export function ArchitectureSection() {
                     </div>
                     <div className="bg-slate-50 p-3 rounded-lg border border-slate-200">
                       <p className="font-semibold text-slate-800">알림 라우팅</p>
-                      <p className="text-xs text-slate-600">Alert feed, 팀 채널</p>
+                      <p className="text-xs text-slate-600">Alert feed, 모바일 알림 라우팅</p>
                     </div>
                     <div className="bg-slate-50 p-3 rounded-lg border border-slate-200">
                       <p className="font-semibold text-slate-800">권한/감사</p>

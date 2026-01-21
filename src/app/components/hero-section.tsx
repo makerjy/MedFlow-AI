@@ -73,6 +73,9 @@ export function HeroSection() {
             <a className="transition hover:text-slate-900" href="#demo-workspace">
               데모
             </a>
+            <a className="transition hover:text-slate-900" href="#mobile-app">
+              모바일 앱
+            </a>
             <a className="transition hover:text-slate-900" href="#architecture">
               아키텍처
             </a>
